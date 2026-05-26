@@ -1,0 +1,540 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>祝你天天开心</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", system-ui, sans-serif;
+      background: #020316;
+    }
+
+    * {
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: #020316;
+    }
+
+    canvas {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+      touch-action: manipulation;
+    }
+
+    .hint {
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: max(16px, env(safe-area-inset-bottom));
+      z-index: 3;
+      text-align: center;
+      pointer-events: none;
+      color: rgba(255, 245, 255, 0.72);
+      font-size: 13px;
+      text-shadow: 0 0 12px rgba(255, 103, 204, 0.75);
+      animation: hintFade 6s ease forwards;
+    }
+
+    @keyframes hintFade {
+      0%, 55% { opacity: 1; transform: translateY(0); }
+      100% { opacity: 0; transform: translateY(10px); }
+    }
+  </style>
+</head>
+<body>
+  <canvas id="sky" aria-label="烟花动画"></canvas>
+  <div class="hint">点一下屏幕，也会开一朵开心烟花</div>
+
+  <script>
+    const canvas = document.getElementById("sky");
+    const ctx = canvas.getContext("2d");
+
+    const DPR = Math.min(window.devicePixelRatio || 1, 2);
+    const FINAL_TEXT = "祝你天天开心";
+    const FINAL_MOOD = "😊  ✨  ٩(ˊᗜˋ*)و  ✨  😊";
+    const RANDOM_FIREWORK_MS = 14500;
+    const FINAL_LAUNCH_MS = 15800;
+    const RESTART_MS = 28500;
+
+    let width = 0;
+    let height = 0;
+    let frame = 0;
+    let showStart = performance.now();
+    let lastRandomLaunch = 0;
+    let finalLaunched = false;
+    let finalStarted = false;
+    let finalLight = 0;
+    let stars = [];
+    let nebula = [];
+    let rockets = [];
+    let particles = [];
+
+    const palettes = [
+      [[255, 66, 120], [255, 176, 56], [255, 245, 135], [255, 255, 255]],
+      [[54, 211, 255], [115, 105, 255], [255, 96, 216], [255, 255, 255]],
+      [[96, 255, 178], [63, 216, 255], [255, 248, 128], [255, 255, 255]],
+      [[255, 84, 84], [255, 154, 64], [255, 230, 108], [255, 255, 255]],
+      [[178, 117, 255], [91, 213, 255], [255, 110, 188], [255, 255, 255]],
+      [[255, 126, 205], [255, 221, 116], [148, 244, 255], [255, 255, 255]],
+      [[255, 113, 146], [178, 126, 255], [96, 255, 214], [255, 248, 196]]
+    ];
+
+    const finalPalette = [
+      [255, 239, 136],
+      [255, 96, 185],
+      [121, 228, 255],
+      [255, 172, 220],
+      [255, 255, 255]
+    ];
+
+    function rand(min, max) {
+      return min + Math.random() * (max - min);
+    }
+
+    function pick(items) {
+      return items[Math.floor(Math.random() * items.length)];
+    }
+
+    function clamp(value, low, high) {
+      return Math.max(low, Math.min(high, value));
+    }
+
+    function color(rgb, alpha = 1) {
+      return `rgba(${clamp(rgb[0], 0, 255)}, ${clamp(rgb[1], 0, 255)}, ${clamp(rgb[2], 0, 255)}, ${alpha})`;
+    }
+
+    function blend(a, b, t) {
+      return [
+        a[0] + (b[0] - a[0]) * t,
+        a[1] + (b[1] - a[1]) * t,
+        a[2] + (b[2] - a[2]) * t
+      ];
+    }
+
+    function resize() {
+      width = window.innerWidth;
+      height = window.innerHeight;
+      canvas.width = Math.floor(width * DPR);
+      canvas.height = Math.floor(height * DPR);
+      ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+      buildSky();
+    }
+
+    function buildSky() {
+      const starCount = Math.floor((width * height) / 3600);
+      stars = Array.from({ length: Math.max(120, Math.min(330, starCount)) }, () => ({
+        x: rand(0, width),
+        y: rand(0, height * 0.72),
+        r: rand(0.45, 2.2),
+        twinkle: rand(0.25, 1),
+        phase: rand(0, Math.PI * 2),
+        tint: pick([[160, 205, 255], [255, 242, 205], [224, 218, 255], [255, 255, 255]])
+      }));
+
+      nebula = Array.from({ length: 26 }, () => ({
+        x: rand(width * 0.05, width * 0.95),
+        y: rand(20, height * 0.58),
+        rx: rand(70, Math.max(130, width * 0.22)),
+        ry: rand(22, Math.max(54, height * 0.09)),
+        phase: rand(0, Math.PI * 2),
+        tint: pick([[31, 29, 75], [44, 24, 68], [18, 52, 82], [48, 35, 88]])
+      }));
+    }
+
+    class Particle {
+      constructor(x, y, vx, vy, rgb, life, size, gravity = 0.055, drag = 0.987, sparkle = false) {
+        this.x = x;
+        this.y = y;
+        this.vx = vx;
+        this.vy = vy;
+        this.rgb = rgb;
+        this.life = life;
+        this.maxLife = life;
+        this.size = size;
+        this.gravity = gravity;
+        this.drag = drag;
+        this.sparkle = sparkle;
+      }
+
+      update() {
+        this.vx *= this.drag;
+        this.vy = this.vy * this.drag + this.gravity;
+        this.x += this.vx;
+        this.y += this.vy;
+        this.life -= 1;
+      }
+
+      draw() {
+        if (this.life <= 0) return;
+        const t = this.life / this.maxLife;
+        let radius = this.size * (0.35 + t * 0.95);
+        let core = this.rgb;
+
+        if (this.sparkle && Math.random() < 0.34) {
+          radius *= 1.8;
+          core = [255, 255, 255];
+        }
+
+        if (t > 0.2) {
+          const halo = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, radius * 3.2);
+          halo.addColorStop(0, color(core, 0.23 * t));
+          halo.addColorStop(1, color([5, 6, 22], 0));
+          ctx.fillStyle = halo;
+          ctx.beginPath();
+          ctx.arc(this.x, this.y, radius * 3.2, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        ctx.fillStyle = color(blend([10, 10, 28], core, t), 0.95);
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, radius, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    class Rocket {
+      constructor(x, y, tx, ty, palette, isFinal = false) {
+        const flight = rand(64, 86);
+        this.x = x;
+        this.y = y;
+        this.tx = tx;
+        this.ty = ty;
+        this.vx = (tx - x) / flight;
+        this.vy = -(y - ty) / flight - 0.6;
+        this.palette = palette;
+        this.isFinal = isFinal;
+        this.age = 0;
+      }
+
+      update() {
+        this.x += this.vx;
+        this.y += this.vy;
+        this.vy += 0.018;
+        this.age += 1;
+
+        if (this.age % 2 === 0) {
+          particles.push(new Particle(
+            this.x + rand(-2.5, 2.5),
+            this.y + rand(7, 16),
+            rand(-0.55, 0.55),
+            rand(0.85, 2),
+            pick(this.palette),
+            rand(24, 38),
+            rand(1.8, 3.3),
+            0.015,
+            0.94,
+            true
+          ));
+        }
+
+        return this.y <= this.ty || this.vy >= 0;
+      }
+
+      draw() {
+        ctx.strokeStyle = "rgba(255, 246, 201, 0.92)";
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.moveTo(this.x, this.y + 26);
+        ctx.lineTo(this.x, this.y);
+        ctx.stroke();
+
+        ctx.fillStyle = "#ffffff";
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, 6, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    function launchRandom(x = null, y = null) {
+      const startX = x ?? rand(width * 0.08, width * 0.92);
+      const targetX = clamp((x ?? startX) + rand(-width * 0.1, width * 0.1), width * 0.08, width * 0.92);
+      const targetY = y ?? rand(height * 0.13, height * 0.43);
+      rockets.push(new Rocket(startX, height + 24, targetX, targetY, pick(palettes)));
+    }
+
+    function launchFinal() {
+      finalLaunched = true;
+      rockets.push(new Rocket(width / 2, height + 28, width / 2, height * 0.24, finalPalette, true));
+    }
+
+    function explode(rocket) {
+      if (rocket.isFinal) {
+        textExplosion(rocket.x, rocket.y);
+        ringExplosion(rocket.x, rocket.y + 12, rocket.palette, true);
+        finalStarted = true;
+        return;
+      }
+
+      const shape = pick(["ring", "chrysanthemum", "willow", "spiral", "peony"]);
+      if (shape === "ring") ringExplosion(rocket.x, rocket.y, rocket.palette);
+      if (shape === "chrysanthemum") chrysanthemumExplosion(rocket.x, rocket.y, rocket.palette);
+      if (shape === "willow") willowExplosion(rocket.x, rocket.y, rocket.palette);
+      if (shape === "spiral") spiralExplosion(rocket.x, rocket.y, rocket.palette);
+      if (shape === "peony") peonyExplosion(rocket.x, rocket.y, rocket.palette);
+    }
+
+    function ringExplosion(x, y, palette, big = false) {
+      const count = big ? 290 : Math.floor(rand(130, 190));
+      const speed = big ? Math.min(width, height) * 0.011 : rand(4.8, 6.8);
+      for (let i = 0; i < count; i += 1) {
+        const angle = Math.PI * 2 * i / count + rand(-0.22, 0.22);
+        const s = speed * rand(0.76, 1.18);
+        particles.push(new Particle(x, y, Math.cos(angle) * s, Math.sin(angle) * s, pick(palette), rand(88, 132), rand(2.2, 4.2), 0.048, 0.982, true));
+      }
+    }
+
+    function chrysanthemumExplosion(x, y, palette) {
+      for (let i = 0; i < 230; i += 1) {
+        const angle = rand(0, Math.PI * 2);
+        const speed = rand(2, 7.4);
+        particles.push(new Particle(x, y, Math.cos(angle) * speed, Math.sin(angle) * speed, pick(palette), rand(72, 118), rand(1.9, 3.8), 0.052, 0.982, Math.random() < 0.62));
+      }
+    }
+
+    function willowExplosion(x, y, palette) {
+      const golden = [[255, 214, 92], [255, 168, 63], [255, 245, 170], [255, 132, 202], [255, 255, 255]];
+      for (let i = 0; i < 220; i += 1) {
+        const angle = rand(Math.PI * 0.08, Math.PI * 0.92);
+        const speed = rand(1.7, 6.2);
+        particles.push(new Particle(x, y, Math.cos(angle) * speed, -Math.abs(Math.sin(angle) * speed) * rand(0.4, 1), pick(Math.random() < 0.75 ? golden : palette), rand(98, 150), rand(1.8, 3.5), 0.082, 0.988, Math.random() < 0.32));
+      }
+    }
+
+    function spiralExplosion(x, y, palette) {
+      for (let i = 0; i < 240; i += 1) {
+        const angle = i * 0.31;
+        const speed = 1.7 + i / 240 * 6.2;
+        particles.push(new Particle(x, y, Math.cos(angle) * speed, Math.sin(angle) * speed, palette[i % palette.length], rand(76, 122), rand(1.8, 3.5), 0.045, 0.984, true));
+      }
+    }
+
+    function peonyExplosion(x, y, palette) {
+      for (let petal = 0; petal < 12; petal += 1) {
+        const base = petal * Math.PI * 2 / 12;
+        for (let i = 0; i < 20; i += 1) {
+          const angle = base + rand(-0.17, 0.17);
+          const speed = rand(3.6, 7.7);
+          particles.push(new Particle(x, y, Math.cos(angle) * speed, Math.sin(angle) * speed, pick(palette), rand(84, 130), rand(2, 4), 0.046, 0.984, true));
+        }
+      }
+    }
+
+    function textExplosion(originX, originY) {
+      const offscreen = document.createElement("canvas");
+      offscreen.width = Math.floor(width * DPR);
+      offscreen.height = Math.floor(height * DPR);
+      const octx = offscreen.getContext("2d");
+      octx.setTransform(DPR, 0, 0, DPR, 0, 0);
+      const fontSize = clamp(width / 8.5, 46, 94);
+      octx.fillStyle = "#fff";
+      octx.textAlign = "center";
+      octx.textBaseline = "middle";
+      octx.font = `900 ${fontSize}px "PingFang SC", "Microsoft YaHei", sans-serif`;
+      octx.fillText(FINAL_TEXT, width / 2, height * 0.48);
+
+      const image = octx.getImageData(0, 0, offscreen.width, offscreen.height).data;
+      const step = Math.max(5, Math.floor(width / 165));
+      const colors = [[255, 96, 177], [255, 230, 108], [96, 226, 255], [255, 190, 226], [255, 255, 255], [147, 255, 213]];
+      let made = 0;
+
+      for (let py = Math.floor(height * 0.3); py < height * 0.63; py += step) {
+        for (let px = Math.floor(width * 0.04); px < width * 0.96; px += step) {
+          const idx = (Math.floor(py * DPR) * offscreen.width + Math.floor(px * DPR)) * 4 + 3;
+          if (image[idx] > 20 && Math.random() < 0.78) {
+            const dx = px - originX;
+            const dy = py - originY;
+            const travel = rand(38, 54);
+            particles.push(new Particle(originX + rand(-8, 8), originY + rand(-8, 8), dx / travel, dy / travel, pick(colors), rand(230, 285), rand(2.3, 4.3), 0, 0.992, true));
+            made += 1;
+          }
+        }
+      }
+
+      if (made < 80) {
+        for (let i = 0; i < 300; i += 1) {
+          const angle = rand(0, Math.PI * 2);
+          const radius = rand(30, Math.min(width, height) * 0.3);
+          particles.push(new Particle(originX, originY, Math.cos(angle) * radius / 48, Math.sin(angle) * radius / 48, pick(colors), rand(210, 270), rand(2.2, 4.1), 0, 0.992, true));
+        }
+      }
+    }
+
+    function softSparkles() {
+      const colors = [[255, 245, 155], [255, 110, 185], [110, 220, 255], [255, 255, 255], [166, 255, 221]];
+      for (let i = 0; i < 18; i += 1) {
+        particles.push(new Particle(rand(width * 0.12, width * 0.88), rand(height * 0.22, height * 0.65), rand(-0.65, 0.65), rand(-0.75, 0.45), pick(colors), rand(40, 75), rand(1.8, 3.4), 0.005, 0.97, true));
+      }
+    }
+
+    function drawBackground() {
+      const sky = ctx.createLinearGradient(0, 0, 0, height);
+      sky.addColorStop(0, "#020316");
+      sky.addColorStop(0.48, "#070728");
+      sky.addColorStop(1, "#101027");
+      ctx.fillStyle = sky;
+      ctx.fillRect(0, 0, width, height);
+
+      for (const mist of nebula) {
+        const pulse = 0.5 + 0.5 * Math.sin(frame * 0.012 + mist.phase);
+        const gradient = ctx.createRadialGradient(mist.x, mist.y, 0, mist.x, mist.y, mist.rx);
+        gradient.addColorStop(0, color(mist.tint, 0.16 + pulse * 0.08));
+        gradient.addColorStop(1, color([3, 4, 18], 0));
+        ctx.fillStyle = gradient;
+        ctx.beginPath();
+        ctx.ellipse(mist.x, mist.y, mist.rx, mist.ry, mist.phase, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      for (const star of stars) {
+        const pulse = 0.58 + 0.42 * Math.sin(frame * 0.035 + star.phase);
+        const alpha = 0.35 + 0.62 * star.twinkle * pulse;
+        ctx.fillStyle = color(star.tint, alpha);
+        ctx.beginPath();
+        ctx.arc(star.x, star.y, star.r, 0, Math.PI * 2);
+        ctx.fill();
+
+        if (star.r > 1.55 && pulse > 0.72) {
+          ctx.strokeStyle = color(star.tint, 0.22 + 0.24 * pulse);
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(star.x - star.r * 2.6, star.y);
+          ctx.lineTo(star.x + star.r * 2.6, star.y);
+          ctx.moveTo(star.x, star.y - star.r * 2.6);
+          ctx.lineTo(star.x, star.y + star.r * 2.6);
+          ctx.stroke();
+        }
+      }
+
+      const ground = ctx.createLinearGradient(0, height - 70, 0, height);
+      ground.addColorStop(0, "rgba(7, 8, 25, 0)");
+      ground.addColorStop(1, "rgba(8, 8, 20, 0.86)");
+      ctx.fillStyle = ground;
+      ctx.fillRect(0, height - 90, width, 90);
+    }
+
+    function drawFinalText() {
+      if (!finalStarted) return;
+      finalLight = Math.min(1, finalLight + 0.018);
+      const pulse = 0.5 + 0.5 * Math.sin(frame * 0.08);
+      const fontSize = clamp(width / 8.5, 46, 94);
+      const y = height * 0.47;
+
+      ctx.save();
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.font = `900 ${fontSize}px "PingFang SC", "Microsoft YaHei", sans-serif`;
+      ctx.shadowColor = `rgba(255, 80, 190, ${0.45 + finalLight * 0.35})`;
+      ctx.shadowBlur = 26;
+      ctx.lineJoin = "round";
+      ctx.lineWidth = Math.max(7, fontSize * 0.1);
+      ctx.strokeStyle = color(blend([76, 22, 92], [255, 112, 202], finalLight), 0.95);
+      ctx.strokeText(FINAL_TEXT, width / 2, y);
+
+      const fill = ctx.createLinearGradient(width * 0.25, y - fontSize, width * 0.75, y + fontSize);
+      fill.addColorStop(0, color([255, 138, 203]));
+      fill.addColorStop(0.5, color([255, 248, 184]));
+      fill.addColorStop(1, color([116, 225, 255]));
+      ctx.fillStyle = fill;
+      ctx.fillText(FINAL_TEXT, width / 2, y);
+
+      ctx.shadowBlur = 16;
+      ctx.font = `800 ${clamp(width / 24, 22, 36)}px "Arial Rounded MT Bold", "PingFang SC", sans-serif`;
+      ctx.fillStyle = color(blend([255, 88, 170], [255, 221, 235], pulse));
+      ctx.fillText(FINAL_MOOD, width / 2, y + fontSize * 0.85);
+
+      ctx.font = `900 ${clamp(width / 18, 28, 42)}px "Arial Rounded MT Bold", "PingFang SC", sans-serif`;
+      for (let i = 0; i < 5; i += 1) {
+        const marks = ["♡", "✦", "♡", "✧", "♡"];
+        const x = width / 2 + (i - 2) * clamp(width * 0.12, 58, 130);
+        const floatY = y - fontSize * 0.88 + Math.sin(frame * 0.045 + i) * 9;
+        ctx.fillStyle = color(i % 2 ? [255, 241, 176] : [255, 129, 204], 0.92);
+        ctx.fillText(marks[i], x, floatY);
+      }
+
+      ctx.restore();
+    }
+
+    function restartShow() {
+      rockets = [];
+      particles = [];
+      showStart = performance.now();
+      lastRandomLaunch = 0;
+      finalLaunched = false;
+      finalStarted = false;
+      finalLight = 0;
+    }
+
+    function tick(now) {
+      frame += 1;
+      const elapsed = now - showStart;
+
+      if (finalStarted && elapsed > RESTART_MS) {
+        restartShow();
+      }
+
+      drawBackground();
+
+      if (!finalLaunched && elapsed < RANDOM_FIREWORK_MS && now - lastRandomLaunch > rand(450, 830)) {
+        launchRandom();
+        lastRandomLaunch = now;
+      }
+
+      if (!finalLaunched && elapsed >= FINAL_LAUNCH_MS) {
+        launchFinal();
+      }
+
+      const flying = [];
+      for (const rocket of rockets) {
+        if (rocket.update()) {
+          explode(rocket);
+        } else {
+          rocket.draw();
+          flying.push(rocket);
+        }
+      }
+      rockets = flying;
+
+      const alive = [];
+      for (const particle of particles) {
+        particle.update();
+        if (particle.life > 0 && particle.x > -120 && particle.x < width + 120 && particle.y < height + 140) {
+          particle.draw();
+          alive.push(particle);
+        }
+      }
+      particles = alive;
+
+      if (finalStarted && frame % 18 === 0 && elapsed < 25000) {
+        softSparkles();
+      }
+
+      drawFinalText();
+      requestAnimationFrame(tick);
+    }
+
+    function handlePointer(event) {
+      const rect = canvas.getBoundingClientRect();
+      const x = event.clientX - rect.left;
+      const y = event.clientY - rect.top;
+      launchRandom(x, y);
+    }
+
+    window.addEventListener("resize", resize);
+    window.addEventListener("orientationchange", resize);
+    canvas.addEventListener("pointerdown", handlePointer);
+    resize();
+    requestAnimationFrame(tick);
+  </script>
+</body>
+</html>

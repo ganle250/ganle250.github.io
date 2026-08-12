@@ -60,7 +60,13 @@
     const canvas = document.getElementById("sky");
     const ctx = canvas.getContext("2d");
 
-    const DPR = Math.min(window.devicePixelRatio || 1, 2);
+    const IS_MOBILE = window.matchMedia("(max-width: 768px), (pointer: coarse)").matches;
+    const REDUCED_MOTION = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const DPR = Math.min(window.devicePixelRatio || 1, REDUCED_MOTION ? 1 : (IS_MOBILE ? 1.25 : 1.75));
+    const PARTICLE_SCALE = REDUCED_MOTION ? 0.38 : (IS_MOBILE ? 0.62 : 0.84);
+    const MAX_PARTICLES = REDUCED_MOTION ? 650 : (IS_MOBILE ? 1250 : 2200);
+    const RANDOM_FIREWORK_MIN_MS = REDUCED_MOTION ? 1500 : (IS_MOBILE ? 900 : 650);
+    const RANDOM_FIREWORK_MAX_MS = REDUCED_MOTION ? 2200 : (IS_MOBILE ? 1300 : 950);
     const FINAL_TEXT = "祝你天天开心";
     const FINAL_MOOD = "😊  ✨  ٩(ˊᗜˋ*)و  ✨  😊";
     const RANDOM_FIREWORK_MS = 14500;
@@ -72,6 +78,7 @@
     let frame = 0;
     let showStart = performance.now();
     let lastRandomLaunch = 0;
+    let nextRandomLaunch = 0;
     let finalLaunched = false;
     let finalStarted = false;
     let finalLight = 0;
@@ -132,8 +139,10 @@
     }
 
     function buildSky() {
-      const starCount = Math.floor((width * height) / 3600);
-      stars = Array.from({ length: Math.max(120, Math.min(330, starCount)) }, () => ({
+      const starCount = Math.floor((width * height) / (IS_MOBILE ? 6200 : 4600));
+      const minStars = IS_MOBILE ? 70 : 100;
+      const maxStars = IS_MOBILE ? 170 : 260;
+      stars = Array.from({ length: Math.max(minStars, Math.min(maxStars, starCount)) }, () => ({
         x: rand(0, width),
         y: rand(0, height * 0.72),
         r: rand(0.45, 2.2),
@@ -142,7 +151,7 @@
         tint: pick([[160, 205, 255], [255, 242, 205], [224, 218, 255], [255, 255, 255]])
       }));
 
-      nebula = Array.from({ length: 26 }, () => ({
+      nebula = Array.from({ length: IS_MOBILE ? 12 : 20 }, () => ({
         x: rand(width * 0.05, width * 0.95),
         y: rand(20, height * 0.58),
         rx: rand(70, Math.max(130, width * 0.22)),
@@ -186,13 +195,10 @@
           core = [255, 255, 255];
         }
 
-        if (t > 0.2) {
-          const halo = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, radius * 3.2);
-          halo.addColorStop(0, color(core, 0.23 * t));
-          halo.addColorStop(1, color([5, 6, 22], 0));
-          ctx.fillStyle = halo;
+        if (t > 0.24) {
+          ctx.fillStyle = color(core, 0.1 * t);
           ctx.beginPath();
-          ctx.arc(this.x, this.y, radius * 3.2, 0, Math.PI * 2);
+          ctx.arc(this.x, this.y, radius * 2.35, 0, Math.PI * 2);
           ctx.fill();
         }
 
@@ -201,6 +207,16 @@
         ctx.arc(this.x, this.y, radius, 0, Math.PI * 2);
         ctx.fill();
       }
+    }
+
+    function addParticle(particle) {
+      if (particles.length >= MAX_PARTICLES) return false;
+      particles.push(particle);
+      return true;
+    }
+
+    function scaledCount(count, minimum = 1) {
+      return Math.max(minimum, Math.floor(count * PARTICLE_SCALE));
     }
 
     class Rocket {
@@ -224,7 +240,7 @@
         this.age += 1;
 
         if (this.age % 2 === 0) {
-          particles.push(new Particle(
+          addParticle(new Particle(
             this.x + rand(-2.5, 2.5),
             this.y + rand(7, 16),
             rand(-0.55, 0.55),
@@ -285,47 +301,48 @@
     }
 
     function ringExplosion(x, y, palette, big = false) {
-      const count = big ? 290 : Math.floor(rand(130, 190));
+      const count = scaledCount(big ? 290 : Math.floor(rand(130, 190)), big ? 150 : 70);
       const speed = big ? Math.min(width, height) * 0.011 : rand(4.8, 6.8);
       for (let i = 0; i < count; i += 1) {
         const angle = Math.PI * 2 * i / count + rand(-0.22, 0.22);
         const s = speed * rand(0.76, 1.18);
-        particles.push(new Particle(x, y, Math.cos(angle) * s, Math.sin(angle) * s, pick(palette), rand(88, 132), rand(2.2, 4.2), 0.048, 0.982, true));
+        addParticle(new Particle(x, y, Math.cos(angle) * s, Math.sin(angle) * s, pick(palette), rand(88, 132), rand(2.2, 4.2), 0.048, 0.982, true));
       }
     }
 
     function chrysanthemumExplosion(x, y, palette) {
-      for (let i = 0; i < 230; i += 1) {
+      for (let i = 0; i < scaledCount(230, 90); i += 1) {
         const angle = rand(0, Math.PI * 2);
         const speed = rand(2, 7.4);
-        particles.push(new Particle(x, y, Math.cos(angle) * speed, Math.sin(angle) * speed, pick(palette), rand(72, 118), rand(1.9, 3.8), 0.052, 0.982, Math.random() < 0.62));
+        addParticle(new Particle(x, y, Math.cos(angle) * speed, Math.sin(angle) * speed, pick(palette), rand(72, 118), rand(1.9, 3.8), 0.052, 0.982, Math.random() < 0.62));
       }
     }
 
     function willowExplosion(x, y, palette) {
       const golden = [[255, 214, 92], [255, 168, 63], [255, 245, 170], [255, 132, 202], [255, 255, 255]];
-      for (let i = 0; i < 220; i += 1) {
+      for (let i = 0; i < scaledCount(220, 85); i += 1) {
         const angle = rand(Math.PI * 0.08, Math.PI * 0.92);
         const speed = rand(1.7, 6.2);
-        particles.push(new Particle(x, y, Math.cos(angle) * speed, -Math.abs(Math.sin(angle) * speed) * rand(0.4, 1), pick(Math.random() < 0.75 ? golden : palette), rand(98, 150), rand(1.8, 3.5), 0.082, 0.988, Math.random() < 0.32));
+        addParticle(new Particle(x, y, Math.cos(angle) * speed, -Math.abs(Math.sin(angle) * speed) * rand(0.4, 1), pick(Math.random() < 0.75 ? golden : palette), rand(98, 150), rand(1.8, 3.5), 0.082, 0.988, Math.random() < 0.32));
       }
     }
 
     function spiralExplosion(x, y, palette) {
-      for (let i = 0; i < 240; i += 1) {
+      const count = scaledCount(240, 90);
+      for (let i = 0; i < count; i += 1) {
         const angle = i * 0.31;
-        const speed = 1.7 + i / 240 * 6.2;
-        particles.push(new Particle(x, y, Math.cos(angle) * speed, Math.sin(angle) * speed, palette[i % palette.length], rand(76, 122), rand(1.8, 3.5), 0.045, 0.984, true));
+        const speed = 1.7 + i / count * 6.2;
+        addParticle(new Particle(x, y, Math.cos(angle) * speed, Math.sin(angle) * speed, palette[i % palette.length], rand(76, 122), rand(1.8, 3.5), 0.045, 0.984, true));
       }
     }
 
     function peonyExplosion(x, y, palette) {
       for (let petal = 0; petal < 12; petal += 1) {
         const base = petal * Math.PI * 2 / 12;
-        for (let i = 0; i < 20; i += 1) {
+        for (let i = 0; i < scaledCount(20, 9); i += 1) {
           const angle = base + rand(-0.17, 0.17);
           const speed = rand(3.6, 7.7);
-          particles.push(new Particle(x, y, Math.cos(angle) * speed, Math.sin(angle) * speed, pick(palette), rand(84, 130), rand(2, 4), 0.046, 0.984, true));
+          addParticle(new Particle(x, y, Math.cos(angle) * speed, Math.sin(angle) * speed, pick(palette), rand(84, 130), rand(2, 4), 0.046, 0.984, true));
         }
       }
     }
@@ -355,25 +372,25 @@
             const dx = px - originX;
             const dy = py - originY;
             const travel = rand(38, 54);
-            particles.push(new Particle(originX + rand(-8, 8), originY + rand(-8, 8), dx / travel, dy / travel, pick(colors), rand(230, 285), rand(2.3, 4.3), 0, 0.992, true));
+            addParticle(new Particle(originX + rand(-8, 8), originY + rand(-8, 8), dx / travel, dy / travel, pick(colors), rand(230, 285), rand(2.3, 4.3), 0, 0.992, true));
             made += 1;
           }
         }
       }
 
       if (made < 80) {
-        for (let i = 0; i < 300; i += 1) {
+        for (let i = 0; i < scaledCount(300, 120); i += 1) {
           const angle = rand(0, Math.PI * 2);
           const radius = rand(30, Math.min(width, height) * 0.3);
-          particles.push(new Particle(originX, originY, Math.cos(angle) * radius / 48, Math.sin(angle) * radius / 48, pick(colors), rand(210, 270), rand(2.2, 4.1), 0, 0.992, true));
+          addParticle(new Particle(originX, originY, Math.cos(angle) * radius / 48, Math.sin(angle) * radius / 48, pick(colors), rand(210, 270), rand(2.2, 4.1), 0, 0.992, true));
         }
       }
     }
 
     function softSparkles() {
       const colors = [[255, 245, 155], [255, 110, 185], [110, 220, 255], [255, 255, 255], [166, 255, 221]];
-      for (let i = 0; i < 18; i += 1) {
-        particles.push(new Particle(rand(width * 0.12, width * 0.88), rand(height * 0.22, height * 0.65), rand(-0.65, 0.65), rand(-0.75, 0.45), pick(colors), rand(40, 75), rand(1.8, 3.4), 0.005, 0.97, true));
+      for (let i = 0; i < scaledCount(18, 7); i += 1) {
+        addParticle(new Particle(rand(width * 0.12, width * 0.88), rand(height * 0.22, height * 0.65), rand(-0.65, 0.65), rand(-0.75, 0.45), pick(colors), rand(40, 75), rand(1.8, 3.4), 0.005, 0.97, true));
       }
     }
 
@@ -470,6 +487,7 @@
       particles = [];
       showStart = performance.now();
       lastRandomLaunch = 0;
+      nextRandomLaunch = 0;
       finalLaunched = false;
       finalStarted = false;
       finalLight = 0;
@@ -485,9 +503,10 @@
 
       drawBackground();
 
-      if (!finalLaunched && elapsed < RANDOM_FIREWORK_MS && now - lastRandomLaunch > rand(450, 830)) {
+      if (!finalLaunched && elapsed < RANDOM_FIREWORK_MS && now - lastRandomLaunch > nextRandomLaunch) {
         launchRandom();
         lastRandomLaunch = now;
+        nextRandomLaunch = rand(RANDOM_FIREWORK_MIN_MS, RANDOM_FIREWORK_MAX_MS);
       }
 
       if (!finalLaunched && elapsed >= FINAL_LAUNCH_MS) {
